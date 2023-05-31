@@ -1,11 +1,15 @@
 import sys
 import os
+import modal
 import ast
-from time import sleep
+import time  # Import time for sleep function
 
+stub = modal.Stub("smol-developer-v1")
 generatedDir = "generated"
-openai_model = "gpt-4"  # or 'gpt-3.5-turbo'
+openai_image = modal.Image.debian_slim().pip_install("openai", "tiktoken")
+openai_model = "gpt-3.5-turbo"
 openai_model_max_tokens = 2000  # i wonder how to tweak this properly
+
 
 def generate_response(system_prompt, user_prompt, *args):
     import openai
@@ -13,7 +17,6 @@ def generate_response(system_prompt, user_prompt, *args):
 
     def reportTokens(prompt):
         encoding = tiktoken.encoding_for_model(openai_model)
-        # print number of tokens in light gray, with first 10 characters of prompt in green
         print(
             "\033[37m"
             + str(len(encoding.encode(prompt)))
@@ -24,15 +27,13 @@ def generate_response(system_prompt, user_prompt, *args):
             + "\033[0m"
         )
 
-    # Set up your OpenAI API credentials
-    openai.api_key = os.environ["OPENAI_API_KEY"]
+    openai.api_key = "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"
 
     messages = []
     messages.append({"role": "system", "content": system_prompt})
     reportTokens(system_prompt)
     messages.append({"role": "user", "content": user_prompt})
     reportTokens(user_prompt)
-    # loop thru each arg and add it to messages alternating role between "assistant" and "user"
     role = "assistant"
     for value in args:
         messages.append({"role": role, "content": value})
@@ -46,19 +47,8 @@ def generate_response(system_prompt, user_prompt, *args):
         "temperature": 0,
     }
 
-    # Send the API request
-    keep_trying = True
-    while keep_trying:
-        try:
-            response = openai.ChatCompletion.create(**params)
-            keep_trying = False
-        except Exception as e:
-            # e.g. when the API is too busy, we don't want to fail everything
-            print("Failed to generate response. Error: ", e)
-            sleep(30)
-            print("Retrying...")
-
-    # Get the reply from the API response
+    response = openai.ChatCompletion.create(**params)
+    time.sleep(1)  # Add a delay of 1 second between API calls
     reply = response.choices[0]["message"]["content"]
     return reply
 
@@ -125,7 +115,7 @@ def main(prompt, directory=generatedDir, file=None):
 
     When given their intent, create a complete, exhaustive list of filepaths that the user would write to make the program.
 
-    only list the filepaths you would write, and return them as a python list of strings.
+    only list the filepaths you would write, and return them as a python list of strings. (need to be a list like ["app.py","function.py","folder/file.py"])
     do not add any other explanation, only return a python list of strings.
     """,
         prompt,

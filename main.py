@@ -1,37 +1,43 @@
+import sys
 import os
 import modal
 import ast
+import time  # Import time for sleep function
 
-stub = modal.Stub("smol-developer-v1") # yes we are recommending using Modal by default, as it helps with deployment. see readme for why.
+stub = modal.Stub("smol-developer-v1")
 generatedDir = "generated"
 openai_image = modal.Image.debian_slim().pip_install("openai", "tiktoken")
-openai_model = "gpt-4" # or 'gpt-3.5-turbo' # but it's going to be worse at generating code so we strongly recommend gpt4. i know most people dont have access, we are working on a hosted version 
-openai_model_max_tokens = 2000 # i wonder how to tweak this properly. we dont want it to be max length as it encourages verbosity of code. but too short and code also truncates suddenly.
+openai_model = "gpt-3.5-turbo"
+openai_model_max_tokens = 2000  # i wonder how to tweak this properly
 
 
 @stub.function(
     image=openai_image,
     secret=modal.Secret.from_dotenv(),
     retries=modal.Retries(
-        max_retries=5,
+        max_retries=3,
         backoff_coefficient=2.0,
         initial_delay=1.0,
     ),
-    concurrency_limit=5, # many users report rate limit issues (https://github.com/smol-ai/developer/issues/10) so we try to do this but it is still inexact. would like ideas on how to improve
-    timeout=120,
+    # concurrency_limit=5,
+    # timeout=120,
 )
 def generate_response(system_prompt, user_prompt, *args):
-    # IMPORTANT: Keep import statements here due to Modal container restrictions https://modal.com/docs/guide/custom-container#additional-python-packages
     import openai
     import tiktoken
 
     def reportTokens(prompt):
         encoding = tiktoken.encoding_for_model(openai_model)
-        # print number of tokens in light gray, with first 50 characters of prompt in green. if truncated, show that it is truncated
-        print("\033[37m" + str(len(encoding.encode(prompt))) + " tokens\033[0m" + " in prompt: " + "\033[92m" + prompt[:50] + "\033[0m" + ("..." if len(prompt) > 50 else ""))
-        
+        print(
+            "\033[37m"
+            + str(len(encoding.encode(prompt)))
+            + " tokens\033[0m"
+            + " in prompt: "
+            + "\033[92m"
+            + prompt[:50]
+            + "\033[0m"
+        )
 
-    # Set up your OpenAI API credentials
     openai.api_key = os.environ["OPENAI_API_KEY"]
 
     messages = []
@@ -39,7 +45,6 @@ def generate_response(system_prompt, user_prompt, *args):
     reportTokens(system_prompt)
     messages.append({"role": "user", "content": user_prompt})
     reportTokens(user_prompt)
-    # Loop through each value in `args` and add it to messages alternating role between "assistant" and "user"
     role = "assistant"
     for value in args:
         messages.append({"role": role, "content": value})
@@ -53,6 +58,13 @@ def generate_response(system_prompt, user_prompt, *args):
         "temperature": 0,
     }
 
+    response = openai.ChatCompletion.create(**params)
+    time.sleep(1)  # Add a delay of 1 second between API calls
+    reply = response.choices[0]["message"]["content"]
+    return reply
+
+    # ... Rest of your code remains the same ...
+
     # Send the API request
     response = openai.ChatCompletion.create(**params)
 
@@ -62,7 +74,9 @@ def generate_response(system_prompt, user_prompt, *args):
 
 
 @stub.function()
-def generate_file(filename, filepaths_string=None, shared_dependencies=None, prompt=None):
+def generate_file(
+    filename, filepaths_string=None, shared_dependencies=None, prompt=None
+):
     # call openai api with this prompt
     filecode = generate_response.call(
         f"""You are an AI developer who is trying to write a program that will generate code for the user based on their intent.
@@ -87,12 +101,12 @@ def generate_file(filename, filepaths_string=None, shared_dependencies=None, pro
        - MOST IMPORTANT OF ALL - the purpose of our app is {prompt} - every line of code you generate must be valid code. Do not include code fences in your response, for example
     
     Bad response:
-    ```javascript 
-    console.log("hello world")
+    ```python 
+    print("hello world")
     ```
     
     Good response:
-    console.log("hello world")
+    print("hello world")
     
     Begin generating the code now.
 
@@ -113,13 +127,17 @@ def main(prompt, directory=generatedDir, file=None):
     # print the prompt in green color
     print("\033[92m" + prompt + "\033[0m")
 
+    # example prompt:
+    # a Chrome extension that, when clicked, opens a small window with a page where you can enter
+    # a prompt for reading the currently open page and generating some response from openai
+
     # call openai api with this prompt
     filepaths_string = generate_response.call(
         """You are an AI developer who is trying to write a program that will generate code for the user based on their intent.
         
     When given their intent, create a complete, exhaustive list of filepaths that the user would write to make the program.
     
-    only list the filepaths you would write, and return them as a python list of strings. 
+    only list the filepaths you would write, and return them as a python list of strings. (need to be a list like ["app.py","function.py","folder/file.py"])
     do not add any other explanation, only return a python list of strings.
     """,
         prompt,
@@ -139,7 +157,12 @@ def main(prompt, directory=generatedDir, file=None):
         if file is not None:
             # check file
             print("file", file)
-            filename, filecode = generate_file(file, filepaths_string=filepaths_string, shared_dependencies=shared_dependencies, prompt=prompt)
+            filename, filecode = generate_file(
+                file,
+                filepaths_string=filepaths_string,
+                shared_dependencies=shared_dependencies,
+                prompt=prompt,
+            )
             write_file(filename, filecode, directory)
         else:
             clean_dir(directory)
@@ -165,31 +188,32 @@ def main(prompt, directory=generatedDir, file=None):
             print(shared_dependencies)
             # write shared dependencies as a md file inside the generated directory
             write_file("shared_dependencies.md", shared_dependencies, directory)
-            
-            # Iterate over generated files and write them to the specified directory
-            for filename, filecode in generate_file.map(
-                list_actual, order_outputs=False, kwargs=dict(filepaths_string=filepaths_string, shared_dependencies=shared_dependencies, prompt=prompt)
-            ):
-                write_file(filename, filecode, directory)
 
+            # Existing for loop
+            # Instead of using .map, use a regular for loop
+            for filepath in list_actual:
+                filename, filecode = generate_file.call(
+                    filepath,
+                    filepaths_string=filepaths_string,
+                    shared_dependencies=shared_dependencies,
+                    prompt=prompt,
+                )
+                write_file(filename, filecode, directory)
+                time.sleep(
+                    0.3
+                )  # Add a delay here to ensure we don't exceed rate limits
 
     except ValueError:
-        print("Failed to parse result")
+        print("Failed to parse result: " + filepaths_string)
 
 
 def write_file(filename, filecode, directory):
     # Output the filename in blue color
     print("\033[94m" + filename + "\033[0m")
     print(filecode)
-    
-    file_path = os.path.join(directory, filename)
+
+    file_path = directory + "/" + filename
     dir = os.path.dirname(file_path)
-
-    # Check if the filename is actually a directory
-    if os.path.isdir(file_path):
-        print(f"Error: {filename} is a directory, not a file.")
-        return
-
     os.makedirs(dir, exist_ok=True)
 
     # Open the file in write mode
@@ -199,15 +223,27 @@ def write_file(filename, filecode, directory):
 
 
 def clean_dir(directory):
-    extensions_to_skip = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.ico', '.tif', '.tiff']  # Add more extensions if needed
+    import shutil
+
+    extensions_to_skip = [
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".svg",
+        ".ico",
+        ".tif",
+        ".tiff",
+    ]  # Add more extensions if needed
 
     # Check if the directory exists
     if os.path.exists(directory):
         # If it does, iterate over all files and directories
-        for dirpath, _, filenames in os.walk(directory):
-            for filename in filenames:
-                _, extension = os.path.splitext(filename)
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                _, extension = os.path.splitext(file)
                 if extension not in extensions_to_skip:
-                    os.remove(os.path.join(dirpath, filename))
+                    os.remove(os.path.join(root, file))
     else:
         os.makedirs(directory, exist_ok=True)

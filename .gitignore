@@ -5,7 +5,8 @@ __pycache__
 /.idea/
 
 # Ignore everything in the generated directory
-/generated/*
+/generated*/*
 
 # Don't ignore .gitkeep files in the generated directory
 !/generated/.gitkeep
+
